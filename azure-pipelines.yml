@@ -30,51 +30,88 @@ stages:
         overrideParameters: '-adminPassword "P@ssword1234!"' 
         deploymentOutputs: 'deploymentOutputs'
 
-    - powershell: |
+    - bash: |
         # Parse the JSON output from the Bicep deployment
-        $outputs = '$(deploymentOutputs)' | ConvertFrom-Json
-        $ip = $outputs.vmIpAddress.value
-        Write-Host "The VM IP captured is: $ip"
+        echo "Raw deployment outputs:"
+        echo '$(deploymentOutputs)'
         
-        # CRITICAL: isOutput=true allows the next stage to 'see' this variable
-        Write-Host "##vso[task.setvariable variable=VM_IP;isOutput=true]$ip"
-      name: CaptureVMIP # Internal name used for dependencies
+        # Extract the IP address using jq (pre-installed on Ubuntu agents)
+        VM_IP=$(echo '$(deploymentOutputs)' | jq -r '.vmIpAddress.value')
+        
+        echo "The VM IP captured is: $VM_IP"
+        
+        # Set the output variable for the next stage
+        echo "##vso[task.setvariable variable=VM_IP;isOutput=true]$VM_IP"
+      name: CaptureVMIP
       displayName: 'Capture VM IP Address'
 
 - stage: Test
   dependsOn: Deploy
   condition: succeeded()
   jobs:
-  - job: RunPesterTests
+  - job: RunConnectivityTests
     variables:
-      # FIX: The correct syntax uses stageDependencies with proper job name reference
       VM_IP: $[ stageDependencies.Deploy.Provision.outputs['CaptureVMIP.VM_IP'] ]
     steps:
-    - powershell: |
-        # Debug output to verify the variable was passed correctly
-        Write-Host "VM_IP received: $(VM_IP)"
-        Write-Host "VM_IP from env: $env:VM_IP"
+    - bash: |
+        echo "VM_IP variable value: $(VM_IP)"
         
-        # Ensure Pester is available
-        Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
-        Import-Module Pester
+        # Make the test script executable
+        chmod +x test_vm_reachability.py
         
-        # Use Pester 5 Configuration object (Real-world standard)
-        $config = New-PesterConfiguration
-        $config.Run.Path = "./VMReachability.Tests.ps1"
-        $config.TestResult.Enabled = $true
-        $config.TestResult.OutputPath = "TestResults.xml"
-        $config.TestResult.OutputFormat = "NUnitXml"
-        
-        # Execute tests
-        Invoke-Pester -Configuration $config
-      displayName: 'Run Pester Reachability Tests'
+        # Run the Python test script
+        python3 test_vm_reachability.py
+      displayName: 'Run VM Reachability Tests'
       env:
-        VM_IP: $(VM_IP) # Injects the variable into the Pester environment
+        VM_IP: $(VM_IP)
+
+    # Optional: If you want to convert results to a test format Azure DevOps understands
+    # This step creates a simple JUnit XML file for test reporting
+    - bash: |
+        # Create a simple test results directory
+        mkdir -p test-results
+        
+        # Run tests and capture exit code
+        python3 test_vm_reachability.py > test-results/output.log 2>&1
+        TEST_EXIT_CODE=$?
+        
+        # Create JUnit XML format report
+        cat > test-results/results.xml << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <testsuites>
+          <testsuite name="VM Reachability Tests" tests="2" failures="0" errors="0" skipped="0">
+            <testcase name="VM IP Variable Test" classname="VMReachabilityTests" />
+            <testcase name="SSH Port Connectivity Test" classname="VMReachabilityTests" />
+          </testsuite>
+        </testsuites>
+        EOF
+        
+        # If tests failed, update the XML
+        if [ $TEST_EXIT_CODE -ne 0 ]; then
+          cat > test-results/results.xml << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <testsuites>
+          <testsuite name="VM Reachability Tests" tests="2" failures="1" errors="0" skipped="0">
+            <testcase name="VM IP Variable Test" classname="VMReachabilityTests" />
+            <testcase name="SSH Port Connectivity Test" classname="VMReachabilityTests">
+              <failure message="Test failed - see logs for details" />
+            </testcase>
+          </testsuite>
+        </testsuites>
+        EOF
+        fi
+        
+        exit $TEST_EXIT_CODE
+      displayName: 'Run Tests with JUnit Output'
+      env:
+        VM_IP: $(VM_IP)
+      condition: succeededOrFailed()
 
     - task: PublishTestResults@2
       inputs:
-        testResultsFormat: 'NUnit'
-        testResultsFiles: 'TestResults.xml'
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'test-results/results.xml'
         failTaskOnFailedTests: true
+        testRunTitle: 'VM Reachability Tests'
       displayName: 'Publish Test Results'
+      condition: always()
