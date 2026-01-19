@@ -2,12 +2,6 @@ trigger:
   branches:
     include:
       - main
-  paths:
-    exclude:
-      - azure-pipelines.yml
-      - '*.png'
-      - README.md
-      - '.gitignore'
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -15,36 +9,36 @@ pool:
 variables:
   resourceGroupName: 'rg-automation-infra-testing'
   location: 'ukwest'
+  # subscriptionId is pulled from the Pipeline UI Variables (Secret)
 
 stages:
 - stage: Deploy
   jobs:
   - job: Provision
     steps:
-    # 1. Deploy the Bicep file
     - task: AzureResourceManagerTemplateDeployment@3
       name: DeployVM
       inputs:
         deploymentScope: 'Resource Group'
-        azureResourceManagerConnection: 'Azure-Service-Connection' # Use the name from Step 1
+        azureResourceManagerConnection: 'Azure-Service-Connection' 
         subscriptionId: '$(subscriptionId)'
         action: 'Create Or Update Resource Group'
         resourceGroupName: '$(resourceGroupName)'
         location: '$(location)'
         templateLocation: 'Linked artifact'
         csmFile: 'main.bicep'
-        overrideParameters: '-adminPassword "P@ssword1234!"' # In real world, use a Secret Variable
+        overrideParameters: '-adminPassword "P@ssword1234!"' 
         deploymentOutputs: 'deploymentOutputs'
 
-    # 2. Extract the IP Address from Bicep Output
     - powershell: |
-        # Convert the deployment JSON output into a PowerShell object
+        # Parse the JSON output from the Bicep deployment
         $outputs = '$(deploymentOutputs)' | ConvertFrom-Json
         $ip = $outputs.vmIpAddress.value
-        Write-Host "The VM IP is: $ip"
-        # Save the IP as a variable for use in other tasks
-        Write-Host "##vso[task.setvariable variable=VM_IP]$ip"
-      name: CaptureVMIP
+        Write-Host "The VM IP captured is: $ip"
+        
+        # CRITICAL: isOutput=true allows the next stage to 'see' this variable
+        Write-Host "##vso[task.setvariable variable=VM_IP;isOutput=true]$ip"
+      name: CaptureVMIP # Internal name used for dependencies
       displayName: 'Capture VM IP Address'
 
 - stage: Test
@@ -53,20 +47,27 @@ stages:
   jobs:
   - job: RunPesterTests
     variables:
-      # This pulls the variable we 'exported' in the previous stage
+      # Mapping the output from the previous stage to this job's scope
       VM_IP: $[ stageDependencies.Deploy.Provision.outputs['CaptureVMIP.VM_IP'] ]
     steps:
     - powershell: |
-        # Install Pester if it's not there (usually is on hosted agents)
-        Install-Module -Name Pester -Force -Scope CurrentUser
+        # Ensure Pester is available
+        Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
+        Import-Module Pester
         
-        # Run the test and output the results in NUnit format
-        Invoke-Pester -Path "./VMReachability.Tests.ps1" -OutputFormat NUnitXml -OutputFile "TestResults.xml"
+        # Use Pester 5 Configuration object (Real-world standard)
+        $config = New-PesterConfiguration
+        $config.Run.Path = "./VMReachability.Tests.ps1"
+        $config.TestResult.Enabled = $true
+        $config.TestResult.OutputPath = "TestResults.xml"
+        $config.TestResult.OutputFormat = "NUnitXml"
+        
+        # Execute tests
+        Invoke-Pester -Configuration $config
       displayName: 'Run Pester Reachability Tests'
       env:
-        VM_IP: $(VM_IP) # Passes the IP into the script
+        VM_IP: $(VM_IP) # Injects the variable into the Pester environment
 
-    # This makes the results visible in the Azure DevOps 'Tests' tab
     - task: PublishTestResults@2
       inputs:
         testResultsFormat: 'NUnit'
