@@ -47,10 +47,14 @@ stages:
   jobs:
   - job: RunPesterTests
     variables:
-      # Mapping the output from the previous stage to this job's scope
+      # FIX: The correct syntax uses stageDependencies with proper job name reference
       VM_IP: $[ stageDependencies.Deploy.Provision.outputs['CaptureVMIP.VM_IP'] ]
     steps:
     - powershell: |
+        # Debug output to verify the variable was passed correctly
+        Write-Host "VM_IP received: $(VM_IP)"
+        Write-Host "VM_IP from env: $env:VM_IP"
+        
         # Ensure Pester is available
         Install-Module -Name Pester -Force -SkipPublisherCheck -Scope CurrentUser
         Import-Module Pester
