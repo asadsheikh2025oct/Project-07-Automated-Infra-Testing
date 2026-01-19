@@ -13,8 +13,8 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  resourceGroupName: 'RG-Infrastructure-Testing'
-  location: 'eastus'
+  resourceGroupName: 'rg-automation-infra-testing'
+  location: 'ukwest'
 
 stages:
 - stage: Deploy
