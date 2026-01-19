@@ -9,6 +9,9 @@ param adminPassword string
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-09-01' = {
   name: '${vmName}-pip'
   location: location
+  sku: {
+    name:'Standard'
+  }
   properties: {
     publicIPAllocationMethod: 'Static'
   }
