@@ -5,7 +5,31 @@ param adminUsername string = 'azureuser'
 @secure()
 param adminPassword string
 
-// 1. Public IP - Needed so Pester can find the VM
+// 1. Network Security Group - Allow SSH traffic
+resource nsg 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
+  name: '${vmName}-nsg'
+  location: location
+  properties: {
+    securityRules: [
+      {
+        name: 'AllowSSH'
+        properties: {
+          priority: 1000
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '22'
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: '*'
+          description: 'Allow SSH traffic for testing'
+        }
+      }
+    ]
+  }
+}
+
+// 2. Public IP - Needed so Pester can find the VM
 resource publicIp 'Microsoft.Network/publicIPAddresses@2023-09-01' = {
   name: '${vmName}-pip'
   location: location
@@ -17,7 +41,7 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2023-09-01' = {
   }
 }
 
-// 2. Virtual Network & Subnet
+// 3. Virtual Network & Subnet
 resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
   name: '${vmName}-vnet'
   location: location
@@ -30,12 +54,16 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-09-01' = {
         name: 'default'
         properties: {
           addressPrefix: '10.0.1.0/24'
+          networkSecurityGroup: {
+            id: nsg.id
+          }
         }
       }
     ]
   }
 }
 
+// 4. Network Interface
 resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
   name: '${vmName}-nic'
   location: location
@@ -56,6 +84,7 @@ resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
   }
 }
 
+// 5. Virtual Machine
 resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
   name: vmName
   location: location
@@ -89,5 +118,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
   }
 }
 
-// outputs
+// Outputs
 output vmIpAddress string = publicIp.properties.ipAddress
+output vmName string = vm.name
+output nsgName string = nsg.name
