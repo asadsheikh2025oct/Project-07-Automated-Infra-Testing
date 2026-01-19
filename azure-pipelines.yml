@@ -44,6 +44,7 @@ stages:
         Write-Host "The VM IP is: $ip"
         # Save the IP as a variable for use in other tasks
         Write-Host "##vso[task.setvariable variable=VM_IP]$ip"
+      name: CaptureVMIP
       displayName: 'Capture VM IP Address'
 
 - stage: Test
