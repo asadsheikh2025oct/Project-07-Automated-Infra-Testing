@@ -1,0 +1,47 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - azure-pipelines.yml
+      - '*.png'
+      - README.md
+      - '.gitignore'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  resourceGroupName: 'RG-Infrastructure-Testing'
+  location: 'eastus'
+
+stages:
+- stage: Deploy
+  jobs:
+  - job: Provision
+    steps:
+    # 1. Deploy the Bicep file
+    - task: AzureResourceManagerTemplateDeployment@3
+      name: DeployVM
+      inputs:
+        deploymentScope: 'Resource Group'
+        azureResourceManagerConnection: 'Azure-Service-Connection' # Use the name from Step 1
+        subscriptionId: '$(subscriptionId)'
+        action: 'Create Or Update Resource Group'
+        resourceGroupName: '$(resourceGroupName)'
+        location: '$(location)'
+        templateLocation: 'Linked artifact'
+        csmFile: 'main.bicep'
+        overrideParameters: '-adminPassword "P@ssword1234!"' # In real world, use a Secret Variable
+        deploymentOutputs: 'deploymentOutputs'
+
+    # 2. Extract the IP Address from Bicep Output
+    - powershell: |
+        # Convert the deployment JSON output into a PowerShell object
+        $outputs = '$(deploymentOutputs)' | ConvertFrom-Json
+        $ip = $outputs.vmIpAddress.value
+        Write-Host "The VM IP is: $ip"
+        # Save the IP as a variable for use in other tasks
+        Write-Host "##vso[task.setvariable variable=VM_IP]$ip"
+      displayName: 'Capture VM IP Address'

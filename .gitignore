@@ -1,0 +1,10 @@
+venv/*
+project-implementation-guide.txt
+LinkedIn-Post.txt
+node_modules/
+npm-debug.log
+.env
+.venv/
+.vscode/
+__pycache__/
+*.pyc
